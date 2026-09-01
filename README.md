@@ -1,4 +1,4 @@
-# react-native-thermal-printer
+# @muhammadansorinasution/react-native-thermal-printer
 
 ![npm](https://img.shields.io/npm/dw/react-native-thermal-receipt-printer-image-qr?logo=github)
 ![npm](https://img.shields.io/npm/v/react-native-thermal-receipt-printer-image-qr?color=green&logo=npm&logoColor=green)
@@ -23,14 +23,14 @@
 ## Installation
 
 ```
-npm i react-native-thermal-printer
+npm i @muhammadansorinasution/react-native-thermal-printer
 npm i react-native-ping
 ```
 
 or
 
 ```
-yarn add react-native-thermal-printer
+yarn add @muhammadansorinasution/react-native-thermal-printer
 yarn add react-native-ping
 ```
 
@@ -41,7 +41,7 @@ next step
 cd ios && pod install
 
 # RN < 0.60
-react-native link react-native-thermal-printer
+react-native link @muhammadansorinasution/react-native-thermal-printer
 ```
 
 ## API Reference
