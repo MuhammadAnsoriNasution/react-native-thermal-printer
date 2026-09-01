@@ -1,5 +1,5 @@
 {
-  "name": "react-native-thermal-receipt-printer-image-qr",
+  "name": "react-native-thermal-printer",
   "version": "0.1.12",
   "description": "Fork of react-native-thermal-receipt-printer. A React Native Library to support USB/BLE/Net printer",
   "main": "dist/index.js",
@@ -13,13 +13,13 @@
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/thiendangit/react-native-thermal-receipt-printer-image-qr"
+    "url": "https://github.com/MuhammadAnsoriNasution/react-native-thermal-printer"
   },
   "files": [
     "dist",
     "android",
     "ios",
-    "react-native-thermal-receipt-printer-image-qr.podspec"
+    "react-native-thermal-printer.podspec"
   ],
   "keywords": [
     "react-native",
@@ -58,7 +58,7 @@
   "peerDependencies": {
     "react-native-ping": "*"
   },
-  "author": "thiendangit",
-  "homepage": "https://github.com/thiendangit/react-native-thermal-receipt-printer-image-qr#readme",
+  "author": "MuhammadAnsoriNasution",
+  "homepage": "https://github.com/MuhammadAnsoriNasution/react-native-thermal-printer#readme",
   "license": "ISC"
 }
