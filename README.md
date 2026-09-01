@@ -251,60 +251,122 @@ interface IUSBPrinter {
 ```
 
 ### BLEPrinter
-
-```typescript
-interface IBLEPrinter {
-  device_name: string;
-  inner_mac_address: string;
-}
-```
-
 ```javascript
-  const [printers, setPrinters] = useState([]);
-  const [currentPrinter, setCurrentPrinter] = useState();
+  import {
+    View,
+    Text,
+    TouchableOpacity,
+    Platform,
+    PermissionsAndroid,
+} from "react-native";
+import React, { useCallback, useEffect, useState } from "react";
+import {
+    BLEPrinter,
+    IBLEPrinter,
+} from "@muhammadansorinasution/react-native-thermal-printer";
+import { SafeAreaView } from "react-native-safe-area-context";
 
-  useEffect(() => {
-    BLEPrinter.init().then(()=> {
-      BLEPrinter.getDeviceList().then(setPrinters);
-    });
-  }, []);
+export default function HomeScreen() {
+    const [printers, setPrinters] = useState<IBLEPrinter[]>([]);
+    const [currentPrinter, setCurrentPrinter] = useState<IBLEPrinter>();
+    const requestBluetoothPermissions =
+        useCallback(async (): Promise<boolean> => {
+            if (Platform.OS !== "android") return true;
+            if (Platform.Version >= 31) {
+                const granted = await PermissionsAndroid.requestMultiple([
+                    PermissionsAndroid.PERMISSIONS.BLUETOOTH_SCAN,
+                    PermissionsAndroid.PERMISSIONS.BLUETOOTH_CONNECT,
+                ]);
+                return (
+                    granted["android.permission.BLUETOOTH_SCAN"] ===
+                        "granted" &&
+                    granted["android.permission.BLUETOOTH_CONNECT"] ===
+                        "granted"
+                );
+            }
+            const granted = await PermissionsAndroid.request(
+                PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION,
+            );
+            return granted === PermissionsAndroid.RESULTS.GRANTED;
+        }, []);
 
-  const _connectPrinter = (printer) => {
-    //connect printer
-    BLEPrinter.connectPrinter(printer.inner_mac_address).then(
-      setCurrentPrinter,
-      error => console.warn(error))
-  }
+    useEffect(() => {
+        const setup = async () => {
+            const hasPermission = await requestBluetoothPermissions();
+            if (!hasPermission) {
+                console.warn("Izin Bluetooth ditolak");
+                return;
+            }
+            BLEPrinter.init().then(() => {
+                BLEPrinter.getDeviceList().then(setPrinters);
+            });
+        };
+        setup();
+    }, [requestBluetoothPermissions]);
 
-  const printTextTest = () => {
-    currentPrinter && BLEPrinter.printText("<C>sample text</C>\n");
-  }
+    const _connectPrinter = (printer: IBLEPrinter) => {
+        BLEPrinter.connectPrinter(printer.inner_mac_address).then(
+            setCurrentPrinter,
+            (error) => console.warn(error),
+        );
+    };
 
-  const printBillTest = () => {
-    currentPrinter && BLEPrinter.printBill("<C>sample bill</C>");
-  }
+    const printTextTest = () => {
+        currentPrinter && BLEPrinter.printText("<C>sample text</C>\n");
+    };
 
-  ...
-
-  return (
-    <View style={styles.container}>
-      {
-        this.state.printers.map(printer => (
-          <TouchableOpacity key={printer.inner_mac_address} onPress={() => _connectPrinter(printer)}>
-            {`device_name: ${printer.device_name}, inner_mac_address: ${printer.inner_mac_address}`}
-          </TouchableOpacity>
-          ))
-      }
-      <TouchableOpacity onPress={printTextTest}>
-        <Text>Print Text</Text>
-      </TouchableOpacity>
-      <TouchableOpacity onPress={printBillTest}>
-        <Text>Print Bill Text</Text>
-      </TouchableOpacity>
-    </View>
-  )
-
-  ...
+    const printBillTest = () => {
+        currentPrinter && BLEPrinter.printBill("<C>sample bill</C>");
+    };
+    return (
+        <SafeAreaView style={{ flex: 1 }}>
+            <View style={{ gap: 5, padding: 10 }}>
+                {printers.map((printer) => (
+                    <TouchableOpacity
+                        style={{
+                            padding: 10,
+                            borderWidth: 1,
+                            borderColor: "red",
+                        }}
+                        key={printer.inner_mac_address}
+                        onPress={() => _connectPrinter(printer)}
+                    >
+                        <Text>{`device_name: ${printer.device_name}, inner_mac_address: ${printer.inner_mac_address}`}</Text>
+                    </TouchableOpacity>
+                ))}
+                {currentPrinter ? (
+                    <>
+                        <Text style={{ textAlign: "center", marginTop: 20 }}>
+                            Connected to {currentPrinter.device_name}
+                        </Text>
+                        <TouchableOpacity
+                            style={{
+                                padding: 10,
+                                borderWidth: 1,
+                                borderColor: "red",
+                            }}
+                            onPress={printTextTest}
+                        >
+                            <Text>Print Text</Text>
+                        </TouchableOpacity>
+                        <TouchableOpacity
+                            style={{
+                                padding: 10,
+                                borderWidth: 1,
+                                borderColor: "red",
+                            }}
+                            onPress={printBillTest}
+                        >
+                            <Text>Print Bill Text</Text>
+                        </TouchableOpacity>
+                    </>
+                ) : (
+                    <Text>No printer connected, please select a printer</Text>
+                )}
+            </View>
+        </SafeAreaView>
+    );
+}
 
 ```
 
