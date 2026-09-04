@@ -220,7 +220,8 @@ public class USBPrinterAdapter implements PrinterAdapter {
                 }
             }
         }
-        return true;
+        Log.e(LOG_TAG, "No suitable bulk-out endpoint found on this USB interface");
+        return false;
     }
 
 
@@ -324,42 +325,44 @@ public class USBPrinterAdapter implements PrinterAdapter {
 
         Log.v(LOG_TAG, "start to print image data " + bitmapImage);
         boolean isConnected = openConnection();
-        if (isConnected) {
-            Log.v(LOG_TAG, "Connected to device");
-            int[][] pixels = getPixelsSlow(bitmapImage, imageWidth, imageHeight);
 
-            int b = mUsbDeviceConnection.bulkTransfer(mEndPoint, SET_LINE_SPACE_24, SET_LINE_SPACE_24.length, 100000);
+        // ✅ Guard tambahan: walau isConnected true, pastikan objek konkretnya juga tidak null
+        if (isConnected && mUsbDeviceConnection != null && mEndPoint != null) {
+            try {
+                Log.i(LOG_TAG, "Connected to device");
+                int[][] pixels = getPixelsSlow(bitmapImage, imageWidth, imageHeight);
 
-            b = mUsbDeviceConnection.bulkTransfer(mEndPoint, CENTER_ALIGN, CENTER_ALIGN.length, 100000);
+                mUsbDeviceConnection.bulkTransfer(mEndPoint, SET_LINE_SPACE_24, SET_LINE_SPACE_24.length, 100000);
+                mUsbDeviceConnection.bulkTransfer(mEndPoint, CENTER_ALIGN, CENTER_ALIGN.length, 100000);
 
-            for (int y = 0; y < pixels.length; y += 24) {
-                // Like I said before, when done sending data,
-                // the printer will resume to normal text printing
-                mUsbDeviceConnection.bulkTransfer(mEndPoint, SELECT_BIT_IMAGE_MODE, SELECT_BIT_IMAGE_MODE.length, 100000);
+                for (int y = 0; y < pixels.length; y += 24) {
+                    mUsbDeviceConnection.bulkTransfer(mEndPoint, SELECT_BIT_IMAGE_MODE, SELECT_BIT_IMAGE_MODE.length, 100000);
 
-                // Set nL and nH based on the width of the image
-                byte[] row = new byte[]{(byte) (0x00ff & pixels[y].length)
-                        , (byte) ((0xff00 & pixels[y].length) >> 8)};
+                    byte[] row = new byte[]{(byte) (0x00ff & pixels[y].length), (byte) ((0xff00 & pixels[y].length) >> 8)};
+                    mUsbDeviceConnection.bulkTransfer(mEndPoint, row, row.length, 100000);
 
-                mUsbDeviceConnection.bulkTransfer(mEndPoint, row, row.length, 100000);
+                    for (int x = 0; x < pixels[y].length; x++) {
+                        byte[] slice = recollectSlice(y, x, pixels);
+                        mUsbDeviceConnection.bulkTransfer(mEndPoint, slice, slice.length, 100000);
+                    }
 
-                for (int x = 0; x < pixels[y].length; x++) {
-                    // for each stripe, recollect 3 bytes (3 bytes = 24 bits)
-                    byte[] slice = recollectSlice(y, x, pixels);
-                    mUsbDeviceConnection.bulkTransfer(mEndPoint, slice, slice.length, 100000);
+                    mUsbDeviceConnection.bulkTransfer(mEndPoint, LINE_FEED, LINE_FEED.length, 100000);
                 }
 
-                // Do a line feed, if not the printing will resume on the same line
+                mUsbDeviceConnection.bulkTransfer(mEndPoint, SET_LINE_SPACE_32, SET_LINE_SPACE_32.length, 100000);
                 mUsbDeviceConnection.bulkTransfer(mEndPoint, LINE_FEED, LINE_FEED.length, 100000);
+            } catch (Exception e) {
+                // ✅ tangkap SEMUA exception, bukan cuma IOException — bulkTransfer bisa lempar
+                // IllegalArgumentException/NullPointerException kalau koneksi sudah invalid
+                Log.e(LOG_TAG, "printImageBase64 failed: " + e.getMessage());
+                closeConnectionIfExists();  // reset state, jangan biarkan connection setengah-rusak nyangkut
+                errorCallback.invoke("Print failed: " + e.getMessage());
             }
-
-            mUsbDeviceConnection.bulkTransfer(mEndPoint, SET_LINE_SPACE_32, SET_LINE_SPACE_32.length, 100000);
-            mUsbDeviceConnection.bulkTransfer(mEndPoint, LINE_FEED, LINE_FEED.length, 100000);
         } else {
-            String msg = "failed to connected to device";
+            String msg = "failed to connect to device";
             Log.v(LOG_TAG, msg);
+            closeConnectionIfExists();
             errorCallback.invoke(msg);
         }
-
     }
 }

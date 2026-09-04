@@ -202,8 +202,10 @@ public class BLEPrinterAdapter implements PrinterAdapter{
                     OutputStream printerOutputStream = socket.getOutputStream();
                     printerOutputStream.write(bytes, 0, bytes.length);
                     printerOutputStream.flush();
-                }catch (IOException e){
-                    Log.e(LOG_TAG, "failed to print data" + rawData);
+                }catch (Exception e){
+                    // ✅ ganti dari catch (IOException e) — tangkap semua exception,
+                    // termasuk kalau socket sudah invalid/closed dari thread lain
+                    Log.e(LOG_TAG, "failed to print raw data: " + e.getMessage());
                     e.printStackTrace();
                 }
 
@@ -250,6 +252,10 @@ public class BLEPrinterAdapter implements PrinterAdapter{
             int[][] pixels = getPixelsSlow(bitmapImage, imageWidth, imageHeight);
 
             OutputStream printerOutputStream = socket.getOutputStream();
+            if (printerOutputStream == null) {
+                errorCallback.invoke("printer output stream is not available");
+                return;
+            }
 
             printerOutputStream.write(SET_LINE_SPACE_24);
             printerOutputStream.write(CENTER_ALIGN);
@@ -273,9 +279,14 @@ public class BLEPrinterAdapter implements PrinterAdapter{
             printerOutputStream.write(LINE_FEED);
 
             printerOutputStream.flush();
-        } catch (IOException e) {
-            Log.e(LOG_TAG, "failed to print data");
+        } catch (Exception e) {
+            // ✅ ganti dari catch (IOException e). getPixelsSlow/recollectSlice bisa
+            // lempar ArrayIndexOutOfBounds/NullPointerException yang sebelumnya
+            // tidak tertangkap sama sekali -> force close.
+            Log.e(LOG_TAG, "failed to print image data: " + e.getMessage());
             e.printStackTrace();
+            closeConnectionIfExists(); // reset state, koneksi kemungkinan sudah tidak valid
+            errorCallback.invoke("Print image failed: " + e.getMessage());
         }
     }
 
@@ -297,6 +308,10 @@ public class BLEPrinterAdapter implements PrinterAdapter{
             int[][] pixels = getPixelsSlow(bitmapImage, imageWidth, imageHeight);
 
             OutputStream printerOutputStream = socket.getOutputStream();
+            if (printerOutputStream == null) {
+                errorCallback.invoke("printer output stream is not available");
+                return;
+            }
 
             printerOutputStream.write(SET_LINE_SPACE_24);
             printerOutputStream.write(CENTER_ALIGN);
@@ -320,9 +335,15 @@ public class BLEPrinterAdapter implements PrinterAdapter{
             printerOutputStream.write(LINE_FEED);
 
             printerOutputStream.flush();
-        } catch (IOException e) {
-            Log.e(LOG_TAG, "failed to print data");
+        } catch (Exception e) {
+            // ✅ ini titik paling relevan untuk kasus kamu: force close di print kedua
+            // saat printer tidak aktif. Sebelumnya exception non-IO (misalnya dari
+            // getPixelsSlow saat bitmap tidak valid, atau socket yang sudah rusak
+            // melempar exception selain IOException) lolos tanpa tertangkap sama sekali.
+            Log.e(LOG_TAG, "failed to print image base64: " + e.getMessage());
             e.printStackTrace();
+            closeConnectionIfExists(); // reset koneksi supaya print berikutnya tidak nyangkut di state rusak
+            errorCallback.invoke("Print image failed: " + e.getMessage());
         }
     }
 }
