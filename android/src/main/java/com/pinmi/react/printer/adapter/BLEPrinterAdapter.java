@@ -1,6 +1,7 @@
 package com.pinmi.react.printer.adapter;
+
 import static com.pinmi.react.printer.adapter.UtilsImage.getPixelsSlow;
-import static com.pinmi.react.printer.adapter.UtilsImage.recollectSlice;
+
 import android.bluetooth.BluetoothAdapter;
 import android.bluetooth.BluetoothDevice;
 import android.bluetooth.BluetoothSocket;
@@ -24,18 +25,28 @@ import java.util.List;
 import java.util.Set;
 import java.util.UUID;
 
-public class BLEPrinterAdapter implements PrinterAdapter{
-
+/**
+ * Bluetooth (RFCOMM/SPP) thermal printer adapter.
+ *
+ * Image printing uses ESC/POS GS v 0 (continuous raster mode) instead
+ * of the legacy ESC * 33 per-24-dot-band mode. The old approach issued
+ * a separate print+feed command for every 24-row band, forcing the
+ * print head to stop/start at every band boundary — on the iWare
+ * J828BT (and similar cheap ESC/POS clones) this produced a visible
+ * mid-print pause and a contrast shift at the seam. GS v 0 sends the
+ * whole image as one raster block so the head prints in one
+ * continuous motion.
+ */
+public class BLEPrinterAdapter implements PrinterAdapter {
 
     private static BLEPrinterAdapter mInstance;
 
-    private final String LOG_TAG =
-            "RNBLEPrinter";
+    private final String LOG_TAG = "RNBLEPrinter";
 
-    private static final int BAND_HEIGHT = 24;
-
-    private static final int WRITE_CHUNK_SIZE =
-            4096;
+    // Chunk size purely for RFCOMM write() safety — the printer still
+    // receives one continuous raster stream, no commands or feeds are
+    // injected between chunks.
+    private static final int WRITE_CHUNK_SIZE = 4096;
 
     private BluetoothDevice mBluetoothDevice;
     private BluetoothSocket mBluetoothSocket;
@@ -43,20 +54,16 @@ public class BLEPrinterAdapter implements PrinterAdapter{
     private ReactApplicationContext mContext;
 
     private final static char ESC_CHAR = 0x1B;
-    private static final byte[] SELECT_BIT_IMAGE_MODE = { 0x1B, 0x2A, 33 };
-    private final static byte[] SET_LINE_SPACE_24 = new byte[]{ ESC_CHAR, 0x33, 24 };
 
-    private final static byte[] SET_LINE_SPACE_32 =
-            new byte[]{
-                    ESC_CHAR,
-                    0x33,
-                    32
-            };
+    private final static byte[] SET_LINE_SPACE_32 = new byte[]{
+            ESC_CHAR,
+            0x33,
+            32
+    };
 
-    private final static byte[] LINE_FEED =
-            new byte[]{
-                    0x0A
-            };
+    private final static byte[] LINE_FEED = new byte[]{
+            0x0A
+    };
 
     private static final byte[] CENTER_ALIGN = {
             0x1B,
@@ -68,10 +75,8 @@ public class BLEPrinterAdapter implements PrinterAdapter{
     }
 
     public static BLEPrinterAdapter getInstance() {
-
         if (mInstance == null) {
-            mInstance =
-                    new BLEPrinterAdapter();
+            mInstance = new BLEPrinterAdapter();
         }
 
         return mInstance;
@@ -88,27 +93,17 @@ public class BLEPrinterAdapter implements PrinterAdapter{
             Callback errorCallback
     ) {
 
-        this.mContext =
-                reactContext;
+        this.mContext = reactContext;
 
-        BluetoothAdapter bluetoothAdapter =
-                getBTAdapter();
+        BluetoothAdapter bluetoothAdapter = getBTAdapter();
 
         if (bluetoothAdapter == null) {
-
-            errorCallback.invoke(
-                    "No bluetooth adapter available"
-            );
-
+            errorCallback.invoke("No bluetooth adapter available");
             return;
         }
 
         if (!bluetoothAdapter.isEnabled()) {
-
-            errorCallback.invoke(
-                    "bluetooth adapter is not enabled"
-            );
-
+            errorCallback.invoke("bluetooth adapter is not enabled");
             return;
         }
 
@@ -116,7 +111,6 @@ public class BLEPrinterAdapter implements PrinterAdapter{
     }
 
     private static BluetoothAdapter getBTAdapter() {
-
         return BluetoothAdapter.getDefaultAdapter();
     }
 
@@ -129,41 +123,25 @@ public class BLEPrinterAdapter implements PrinterAdapter{
             Callback errorCallback
     ) {
 
-        BluetoothAdapter bluetoothAdapter =
-                getBTAdapter();
+        BluetoothAdapter bluetoothAdapter = getBTAdapter();
 
-        List<PrinterDevice> printerDevices =
-                new ArrayList<>();
+        List<PrinterDevice> printerDevices = new ArrayList<>();
 
         if (bluetoothAdapter == null) {
-
-            errorCallback.invoke(
-                    "No bluetooth adapter available"
-            );
-
+            errorCallback.invoke("No bluetooth adapter available");
             return printerDevices;
         }
 
         if (!bluetoothAdapter.isEnabled()) {
-
-            errorCallback.invoke(
-                    "bluetooth is not enabled"
-            );
-
+            errorCallback.invoke("bluetooth is not enabled");
             return printerDevices;
         }
 
         Set<BluetoothDevice> pairedDevices =
                 bluetoothAdapter.getBondedDevices();
 
-        for (
-                BluetoothDevice device :
-                pairedDevices
-        ) {
-
-            printerDevices.add(
-                    new BLEPrinterDevice(device)
-            );
+        for (BluetoothDevice device : pairedDevices) {
+            printerDevices.add(new BLEPrinterDevice(device));
         }
 
         return printerDevices;
@@ -180,52 +158,32 @@ public class BLEPrinterAdapter implements PrinterAdapter{
             Callback errorCallback
     ) {
 
-        BluetoothAdapter bluetoothAdapter =
-                getBTAdapter();
+        BluetoothAdapter bluetoothAdapter = getBTAdapter();
 
         if (bluetoothAdapter == null) {
-
-            errorCallback.invoke(
-                    "No bluetooth adapter available"
-            );
-
+            errorCallback.invoke("No bluetooth adapter available");
             return;
         }
 
         if (!bluetoothAdapter.isEnabled()) {
-
-            errorCallback.invoke(
-                    "bluetooth is not enabled"
-            );
-
+            errorCallback.invoke("bluetooth is not enabled");
             return;
         }
 
         BLEPrinterDeviceId blePrinterDeviceId =
-                (BLEPrinterDeviceId)
-                        printerDeviceId;
+                (BLEPrinterDeviceId) printerDeviceId;
 
-        String targetMac =
-                blePrinterDeviceId
-                        .getInnerMacAddress();
+        String targetMac = blePrinterDeviceId.getInnerMacAddress();
 
         if (
                 this.mBluetoothDevice != null
                         && this.mBluetoothSocket != null
-                        && this.mBluetoothDevice
-                        .getAddress()
-                        .equals(targetMac)
+                        && this.mBluetoothDevice.getAddress().equals(targetMac)
         ) {
-
-            Log.v(
-                    LOG_TAG,
-                    "Already connected"
-            );
+            Log.v(LOG_TAG, "Already connected");
 
             successCallback.invoke(
-                    new BLEPrinterDevice(
-                            this.mBluetoothDevice
-                    ).toRNWritableMap()
+                    new BLEPrinterDevice(this.mBluetoothDevice).toRNWritableMap()
             );
 
             return;
@@ -236,66 +194,34 @@ public class BLEPrinterAdapter implements PrinterAdapter{
         Set<BluetoothDevice> pairedDevices =
                 bluetoothAdapter.getBondedDevices();
 
-        for (
-                BluetoothDevice device :
-                pairedDevices
-        ) {
+        for (BluetoothDevice device : pairedDevices) {
 
-            if (
-                    device.getAddress()
-                            .equals(targetMac)
-            ) {
+            if (device.getAddress().equals(targetMac)) {
 
                 try {
-
-                    connectBluetoothDevice(
-                            device,
-                            false
-                    );
+                    connectBluetoothDevice(device, false);
 
                     successCallback.invoke(
-                            new BLEPrinterDevice(
-                                    this.mBluetoothDevice
-                            ).toRNWritableMap()
+                            new BLEPrinterDevice(this.mBluetoothDevice).toRNWritableMap()
                     );
 
                     return;
 
                 } catch (IOException e) {
-
-                    Log.w(
-                            LOG_TAG,
-                            "Normal RFCOMM connection failed, retrying",
-                            e
-                    );
+                    Log.w(LOG_TAG, "Normal RFCOMM connection failed, retrying", e);
 
                     try {
-
-                        connectBluetoothDevice(
-                                device,
-                                true
-                        );
+                        connectBluetoothDevice(device, true);
 
                         successCallback.invoke(
-                                new BLEPrinterDevice(
-                                        this.mBluetoothDevice
-                                ).toRNWritableMap()
+                                new BLEPrinterDevice(this.mBluetoothDevice).toRNWritableMap()
                         );
 
                         return;
 
                     } catch (IOException er) {
-
-                        Log.e(
-                                LOG_TAG,
-                                "Bluetooth connection failed",
-                                er
-                        );
-
-                        errorCallback.invoke(
-                                er.getMessage()
-                        );
-
+                        Log.e(LOG_TAG, "Bluetooth connection failed", er);
+                        errorCallback.invoke(er.getMessage());
                         return;
                     }
                 }
@@ -307,15 +233,9 @@ public class BLEPrinterAdapter implements PrinterAdapter{
                         + "please perform Bluetooth pairing "
                         + "in the system settings first.";
 
-        Toast.makeText(
-                this.mContext,
-                errorText,
-                Toast.LENGTH_LONG
-        ).show();
+        Toast.makeText(this.mContext, errorText, Toast.LENGTH_LONG).show();
 
-        errorCallback.invoke(
-                errorText
-        );
+        errorCallback.invoke(errorText);
     }
 
     private void connectBluetoothDevice(
@@ -323,77 +243,43 @@ public class BLEPrinterAdapter implements PrinterAdapter{
             Boolean retry
     ) throws IOException {
 
-        UUID uuid =
-                UUID.fromString(
-                        "00001101-0000-1000-8000-00805f9b34fb"
-                );
+        UUID uuid = UUID.fromString("00001101-0000-1000-8000-00805f9b34fb");
 
         if (retry) {
-
             try {
-
                 this.mBluetoothSocket =
-                        (BluetoothSocket)
-                                device.getClass()
-                                        .getMethod(
-                                                "createRfcommSocket",
-                                                new Class[]{
-                                                        int.class
-                                                }
-                                        )
-                                        .invoke(
-                                                device,
-                                                1
-                                        );
+                        (BluetoothSocket) device.getClass()
+                                .getMethod("createRfcommSocket", new Class[]{int.class})
+                                .invoke(device, 1);
 
             } catch (Exception e) {
-
-                throw new IOException(
-                        "Failed to create fallback RFCOMM socket",
-                        e
-                );
+                throw new IOException("Failed to create fallback RFCOMM socket", e);
             }
 
         } else {
-
             this.mBluetoothSocket =
-                    device.createInsecureRfcommSocketToServiceRecord(
-                            uuid
-                    );
+                    device.createInsecureRfcommSocketToServiceRecord(uuid);
 
             this.mBluetoothSocket.connect();
         }
 
-        this.mBluetoothDevice =
-                device;
+        this.mBluetoothDevice = device;
     }
 
     @Override
     public synchronized void closeConnectionIfExists() {
 
         try {
-
             if (this.mBluetoothSocket != null) {
-
                 this.mBluetoothSocket.close();
-
             }
 
         } catch (IOException e) {
-
-            Log.w(
-                    LOG_TAG,
-                    "Error closing Bluetooth socket",
-                    e
-            );
+            Log.w(LOG_TAG, "Error closing Bluetooth socket", e);
 
         } finally {
-
-            this.mBluetoothSocket =
-                    null;
-
-            this.mBluetoothDevice =
-                    null;
+            this.mBluetoothSocket = null;
+            this.mBluetoothDevice = null;
         }
     }
 
@@ -401,45 +287,28 @@ public class BLEPrinterAdapter implements PrinterAdapter{
     // LOW LEVEL BLUETOOTH WRITE
     // ---------------------------------------------------------
 
+    /**
+     * Writes a (possibly large) buffer as a sequence of write() calls,
+     * each capped at WRITE_CHUNK_SIZE. This is purely a transport-level
+     * safety measure — no commands or line feeds are injected between
+     * chunks, so the printer still receives one continuous stream.
+     */
     private void writeBluetooth(
             OutputStream outputStream,
             byte[] data
     ) throws IOException {
 
-        if (
-                data == null
-                        || data.length == 0
-        ) {
+        if (data == null || data.length == 0) {
             return;
         }
 
-        /*
-         * RFCOMM is a stream.
-         *
-         * We still chunk very large buffers to avoid
-         * putting a huge amount of data into one write().
-         *
-         * 4096 bytes is intentionally conservative for
-         * inexpensive thermal printers.
-         */
         int offset = 0;
 
-        while (
-                offset < data.length
-        ) {
+        while (offset < data.length) {
 
-            int length =
-                    Math.min(
-                            WRITE_CHUNK_SIZE,
-                            data.length - offset
-                    );
+            int length = Math.min(WRITE_CHUNK_SIZE, data.length - offset);
 
-            outputStream.write(
-                    data,
-                    offset,
-                    length
-            );
-
+            outputStream.write(data, offset, length);
             outputStream.flush();
 
             offset += length;
@@ -447,90 +316,67 @@ public class BLEPrinterAdapter implements PrinterAdapter{
     }
 
     // ---------------------------------------------------------
-    // ESC/POS RASTER BAND
+    // ESC/POS GS v 0 FULL RASTER BUILDER
     // ---------------------------------------------------------
 
-    private byte[] buildRasterBand(
-            int[][] pixels,
-            int y
-    ) {
+    /**
+     * Builds a single GS v 0 raster command containing the entire
+     * image. The printer receives width/height once and then a
+     * continuous bit-packed pixel stream, letting the head print in
+     * one uninterrupted pass instead of stopping at every band.
+     */
+    private byte[] buildFullRasterImage(int[][] pixels) {
 
-        if (
-                pixels == null
-                        || pixels.length == 0
-                        || y >= pixels.length
-        ) {
-
+        if (pixels == null || pixels.length == 0) {
             return null;
         }
 
-        int widthBytes =
-                pixels[y].length;
+        int height = pixels.length;
+        int width = pixels[0].length;
+        int widthBytes = (width + 7) / 8; // 1 bit per pixel, MSB first
 
         ByteArrayOutputStream buffer =
-                new ByteArrayOutputStream(
-                        8
-                                + (
-                                widthBytes
-                                        * BAND_HEIGHT
-                        )
-                );
+                new ByteArrayOutputStream(8 + (widthBytes * height));
 
         try {
+            // GS v 0 m xL xH yL yH
+            buffer.write(0x1D); // GS
+            buffer.write(0x76); // v
+            buffer.write(0x30); // 0
+            buffer.write(0x00); // m = normal mode, no scaling
 
-            // ESC * 33
-            buffer.write(
-                    SELECT_BIT_IMAGE_MODE
-            );
+            buffer.write(widthBytes & 0xFF);        // xL
+            buffer.write((widthBytes >> 8) & 0xFF); // xH
+            buffer.write(height & 0xFF);             // yL
+            buffer.write((height >> 8) & 0xFF);      // yH
 
-            // nL
-            buffer.write(
-                    widthBytes & 0xFF
-            );
+            for (int y = 0; y < height; y++) {
 
-            // nH
-            buffer.write(
-                    (widthBytes >> 8) & 0xFF
-            );
+                int[] row = pixels[y];
 
-            /*
-             * Every x contains one 24-dot vertical
-             * slice = 3 bytes.
-             */
-            for (
-                    int x = 0;
-                    x < widthBytes;
-                    x++
-            ) {
+                for (int bx = 0; bx < widthBytes; bx++) {
 
-                byte[] slice =
-                        recollectSlice(
-                                y,
-                                x,
-                                pixels
-                        );
+                    byte b = 0;
 
-                if (slice != null) {
+                    for (int bit = 0; bit < 8; bit++) {
 
-                    buffer.write(
-                            slice
-                    );
+                        int x = bx * 8 + bit;
+
+                        if (x < width) {
+                            boolean black = UtilsImage.shouldPrintColor(row[x]);
+
+                            if (black) {
+                                b |= (byte) (1 << (7 - bit));
+                            }
+                        }
+                    }
+
+                    buffer.write(b);
                 }
             }
 
-            // Move to next raster line.
-            buffer.write(
-                    LINE_FEED
-            );
-
         } catch (IOException e) {
-
-            Log.e(
-                    LOG_TAG,
-                    "Failed to build raster band",
-                    e
-            );
-
+            Log.e(LOG_TAG, "Failed to build full raster image", e);
             return null;
         }
 
@@ -547,63 +393,31 @@ public class BLEPrinterAdapter implements PrinterAdapter{
             Callback errorCallback
     ) {
 
-        if (
-                this.mBluetoothSocket == null
-        ) {
-
+        if (this.mBluetoothSocket == null) {
             errorCallback.invoke(
-                    "bluetooth connection is not built, "
-                            + "may be you forgot to connectPrinter"
+                    "bluetooth connection is not built, may be you forgot to connectPrinter"
             );
-
             return;
         }
 
         try {
+            byte[] bytes = Base64.decode(rawBase64Data, Base64.DEFAULT);
 
-            byte[] bytes =
-                    Base64.decode(
-                            rawBase64Data,
-                            Base64.DEFAULT
-                    );
-
-            OutputStream outputStream =
-                    this.mBluetoothSocket
-                            .getOutputStream();
+            OutputStream outputStream = this.mBluetoothSocket.getOutputStream();
 
             if (outputStream == null) {
-
-                errorCallback.invoke(
-                        "printer output stream is not available"
-                );
-
+                errorCallback.invoke("printer output stream is not available");
                 return;
             }
 
-            writeBluetooth(
-                    outputStream,
-                    bytes
-            );
+            writeBluetooth(outputStream, bytes);
 
-            Log.i(
-                    LOG_TAG,
-                    "Raw print completed"
-            );
+            Log.i(LOG_TAG, "Raw print completed");
 
         } catch (Exception e) {
-
-            Log.e(
-                    LOG_TAG,
-                    "Raw print failed",
-                    e
-            );
-
+            Log.e(LOG_TAG, "Raw print failed", e);
             closeConnectionIfExists();
-
-            errorCallback.invoke(
-                    "Raw print failed: "
-                            + e.getMessage()
-            );
+            errorCallback.invoke("Raw print failed: " + e.getMessage());
         }
     }
 
@@ -611,53 +425,31 @@ public class BLEPrinterAdapter implements PrinterAdapter{
     // URL IMAGE
     // ---------------------------------------------------------
 
-    public static Bitmap getBitmapFromURL(
-            String src
-    ) {
+    public static Bitmap getBitmapFromURL(String src) {
 
-        HttpURLConnection connection =
-                null;
-
-        InputStream input =
-                null;
+        HttpURLConnection connection = null;
+        InputStream input = null;
 
         try {
+            URL url = new URL(src);
 
-            URL url =
-                    new URL(src);
-
-            connection =
-                    (HttpURLConnection)
-                            url.openConnection();
-
+            connection = (HttpURLConnection) url.openConnection();
             connection.setDoInput(true);
             connection.connect();
 
-            input =
-                    connection.getInputStream();
+            input = connection.getInputStream();
 
-            return BitmapFactory.decodeStream(
-                    input
-            );
+            return BitmapFactory.decodeStream(input);
 
         } catch (IOException e) {
-
-            Log.e(
-                    "RNBLEPrinter",
-                    "Failed to download bitmap",
-                    e
-            );
-
+            Log.e("RNBLEPrinter", "Failed to download bitmap", e);
             return null;
 
         } finally {
-
             try {
-
                 if (input != null) {
                     input.close();
                 }
-
             } catch (IOException ignored) {
             }
 
@@ -679,26 +471,14 @@ public class BLEPrinterAdapter implements PrinterAdapter{
             Callback errorCallback
     ) {
 
-        Bitmap bitmapImage =
-                getBitmapFromURL(
-                        imageUrl
-                );
+        Bitmap bitmapImage = getBitmapFromURL(imageUrl);
 
         if (bitmapImage == null) {
-
-            errorCallback.invoke(
-                    "image not found"
-            );
-
+            errorCallback.invoke("image not found");
             return;
         }
 
-        printBitmap(
-                bitmapImage,
-                imageWidth,
-                imageHeight,
-                errorCallback
-        );
+        printBitmap(bitmapImage, imageWidth, imageHeight, errorCallback);
     }
 
     // ---------------------------------------------------------
@@ -714,20 +494,11 @@ public class BLEPrinterAdapter implements PrinterAdapter{
     ) {
 
         if (bitmapImage == null) {
-
-            errorCallback.invoke(
-                    "image not found"
-            );
-
+            errorCallback.invoke("image not found");
             return;
         }
 
-        printBitmap(
-                bitmapImage,
-                imageWidth,
-                imageHeight,
-                errorCallback
-        );
+        printBitmap(bitmapImage, imageWidth, imageHeight, errorCallback);
     }
 
     // ---------------------------------------------------------
@@ -741,151 +512,64 @@ public class BLEPrinterAdapter implements PrinterAdapter{
             Callback errorCallback
     ) {
 
-        if (
-                this.mBluetoothSocket == null
-        ) {
-
+        if (this.mBluetoothSocket == null) {
             errorCallback.invoke(
-                    "bluetooth connection is not built, "
-                            + "may be you forgot to connectPrinter"
+                    "bluetooth connection is not built, may be you forgot to connectPrinter"
             );
-
             return;
         }
 
         try {
-
             Log.i(
                     LOG_TAG,
                     "Start printing bitmap: "
-                            + bitmapImage.getWidth()
-                            + "x"
-                            + bitmapImage.getHeight()
+                            + bitmapImage.getWidth() + "x" + bitmapImage.getHeight()
             );
 
-            int[][] pixels =
-                    getPixelsSlow(
-                            bitmapImage,
-                            imageWidth,
-                            imageHeight
-                    );
+            int[][] pixels = getPixelsSlow(bitmapImage, imageWidth, imageHeight);
 
-            OutputStream outputStream =
-                    this.mBluetoothSocket
-                            .getOutputStream();
+            OutputStream outputStream = this.mBluetoothSocket.getOutputStream();
 
             if (outputStream == null) {
-
-                errorCallback.invoke(
-                        "printer output stream is not available"
-                );
-
+                errorCallback.invoke("printer output stream is not available");
                 return;
             }
 
-            // Set 24-dot line spacing
-            writeBluetooth(
-                    outputStream,
-                    SET_LINE_SPACE_24
-            );
+            // Center alignment still applies to the raster block on
+            // most ESC/POS clones.
+            writeBluetooth(outputStream, CENTER_ALIGN);
 
-            // Center alignment
-            writeBluetooth(
-                    outputStream,
-                    CENTER_ALIGN
-            );
+            byte[] rasterImage = buildFullRasterImage(pixels);
 
-            int totalBands =
-                    (
-                            pixels.length
-                                    + BAND_HEIGHT
-                                    - 1
-                    )
-                            / BAND_HEIGHT;
+            if (rasterImage == null || rasterImage.length == 0) {
+                throw new IOException("Failed to build raster image");
+            }
 
             Log.i(
                     LOG_TAG,
-                    "Printing "
-                            + totalBands
-                            + " raster bands"
+                    "Sending raster image: " + rasterImage.length
+                            + " bytes in one continuous block"
             );
 
-            for (
-                    int y = 0;
-                    y < pixels.length;
-                    y += BAND_HEIGHT
-            ) {
+            // ✅ Satu blok data kontinu — writeBluetooth() masih mem-chunk per
+            // WRITE_CHUNK_SIZE untuk keamanan RFCOMM, tapi TANPA command/feed
+            // terpisah di antaranya, jadi printer menganggapnya satu print job
+            // kontinu (tidak ada lagi stop/start per-band seperti sebelumnya).
+            writeBluetooth(outputStream, rasterImage);
 
-                byte[] band =
-                        buildRasterBand(
-                                pixels,
-                                y
-                        );
-
-                if (
-                        band == null
-                                || band.length == 0
-                ) {
-
-                    throw new IOException(
-                            "Failed to build raster band at y="
-                                    + y
-                    );
-                }
-
-                writeBluetooth(
-                        outputStream,
-                        band
-                );
-
-                Log.d(
-                        LOG_TAG,
-                        "Band "
-                                + (
-                                (y / BAND_HEIGHT)
-                                        + 1
-                        )
-                                + "/"
-                                + totalBands
-                                + " sent, "
-                                + band.length
-                                + " bytes"
-                );
-            }
-
-            // Restore line spacing
-            writeBluetooth(
-                    outputStream,
-                    SET_LINE_SPACE_32
-            );
-
-            // Final line feed
-            writeBluetooth(
-                    outputStream,
-                    LINE_FEED
-            );
+            // Restore normal line spacing, in case a text print follows this
+            // image later in the same connection. Cheap no-op otherwise.
+            writeBluetooth(outputStream, SET_LINE_SPACE_32);
+            writeBluetooth(outputStream, LINE_FEED);
 
             outputStream.flush();
 
-            Log.i(
-                    LOG_TAG,
-                    "Bluetooth image print completed"
-            );
+            Log.i(LOG_TAG, "Bluetooth image print completed");
 
         } catch (Exception e) {
-
-            Log.e(
-                    LOG_TAG,
-                    "Bluetooth image print failed",
-                    e
-            );
-
+            Log.e(LOG_TAG, "Bluetooth image print failed", e);
             closeConnectionIfExists();
-
-            errorCallback.invoke(
-                    "Print image failed: "
-                            + e.getMessage()
-            );
+            errorCallback.invoke("Print image failed: " + e.getMessage());
         }
     }
 }

@@ -1,7 +1,6 @@
 package com.pinmi.react.printer.adapter;
 
 import static com.pinmi.react.printer.adapter.UtilsImage.getPixelsSlow;
-import static com.pinmi.react.printer.adapter.UtilsImage.recollectSlice;
 
 import android.annotation.SuppressLint;
 import android.app.PendingIntent;
@@ -38,10 +37,20 @@ import java.util.List;
 /**
  * USB thermal printer adapter.
  *
- * Optimized for image printing:
- * - Builds one ESC/POS raster band in memory.
- * - Sends the complete 24-dot band with one bulkTransfer().
- * - Avoids thousands of tiny USB transfers.
+ * Image printing now uses ESC/POS GS v 0 (continuous raster mode)
+ * instead of the legacy ESC * 33 per-24-dot-band mode.
+ *
+ * Rationale: ESC * mode issues a separate print+feed command for every
+ * 24-row band, forcing the print head to stop/start at every band
+ * boundary. On slow/cheap thermal heads this produces visible pause +
+ * contrast banding at band edges. GS v 0 sends the whole image as one
+ * raster block so the head prints in one continuous motion.
+ *
+ * bulkTransfer() is still chunked internally (MAX_USB_CHUNK) purely as
+ * a safety measure against a known Android USB host bug where single
+ * transfers above ~16KB can silently truncate on some devices/kernels -
+ * this chunking is transparent to the printer, it's still one
+ * continuous raster stream, not separate print commands.
  */
 public class USBPrinterAdapter implements PrinterAdapter {
 
@@ -50,8 +59,11 @@ public class USBPrinterAdapter implements PrinterAdapter {
 
     private final String LOG_TAG = "RNUSBPrinter";
 
-    private static final int BAND_HEIGHT = 24;
     private static final int USB_TIMEOUT = 100000;
+
+    // Safe chunk size for bulkTransfer(); well under the ~16KB threshold
+    // where some Android USB host stacks silently truncate transfers.
+    private static final int MAX_USB_CHUNK = 4096;
 
     private Context mContext;
     private UsbManager mUSBManager;
@@ -70,32 +82,14 @@ public class USBPrinterAdapter implements PrinterAdapter {
 
     private final static char ESC_CHAR = 0x1B;
 
-    private static final byte[] SELECT_BIT_IMAGE_MODE = {
-            ESC_CHAR,
-            0x2A,
-            33
-    };
-
-    private final static byte[] SET_LINE_SPACE_24 = new byte[]{
-            ESC_CHAR,
-            0x33,
-            24
-    };
-
-    private final static byte[] SET_LINE_SPACE_32 = new byte[]{
-            ESC_CHAR,
-            0x33,
-            32
-    };
-
-    private final static byte[] LINE_FEED = new byte[]{
-            0x0A
-    };
-
     private static final byte[] CENTER_ALIGN = {
             0x1B,
             0x61,
             0x31
+    };
+
+    private final static byte[] LINE_FEED = new byte[]{
+            0x0A
     };
 
     private USBPrinterAdapter() {
@@ -532,8 +526,15 @@ public class USBPrinterAdapter implements PrinterAdapter {
     // LOW LEVEL USB WRITE
     // ---------------------------------------------------------
 
-    private boolean writeUsb(
-            byte[] data
+    /**
+     * Single bulkTransfer() call for one chunk. Kept separate from
+     * writeUsb() so raw prints (small payloads) can still call this
+     * directly without going through the chunking wrapper.
+     */
+    private boolean writeUsbChunk(
+            byte[] data,
+            int offset,
+            int length
     ) {
 
         if (
@@ -544,19 +545,20 @@ public class USBPrinterAdapter implements PrinterAdapter {
             return false;
         }
 
-        if (
-                data == null
-                        || data.length == 0
-        ) {
+        byte[] chunk;
 
-            return true;
+        if (offset == 0 && length == data.length) {
+            chunk = data;
+        } else {
+            chunk = new byte[length];
+            System.arraycopy(data, offset, chunk, 0, length);
         }
 
         int result =
                 mUsbDeviceConnection.bulkTransfer(
                         mEndPoint,
-                        data,
-                        data.length,
+                        chunk,
+                        chunk.length,
                         USB_TIMEOUT
                 );
 
@@ -565,7 +567,7 @@ public class USBPrinterAdapter implements PrinterAdapter {
             Log.e(
                     LOG_TAG,
                     "USB bulkTransfer failed. size="
-                            + data.length
+                            + chunk.length
                             + " result="
                             + result
             );
@@ -573,12 +575,12 @@ public class USBPrinterAdapter implements PrinterAdapter {
             return false;
         }
 
-        if (result != data.length) {
+        if (result != chunk.length) {
 
             Log.w(
                     LOG_TAG,
                     "Partial USB transfer. expected="
-                            + data.length
+                            + chunk.length
                             + " actual="
                             + result
             );
@@ -589,78 +591,120 @@ public class USBPrinterAdapter implements PrinterAdapter {
         return true;
     }
 
+    /**
+     * Sends a (possibly large) buffer as a sequence of bulkTransfer()
+     * calls, each capped at MAX_USB_CHUNK. This is purely a transport-
+     * level safety measure — the printer still receives one continuous
+     * raster stream with no extra commands or line feeds injected
+     * between chunks, so the print head does not stop/start between
+     * them the way it did with the old per-band ESC * approach.
+     */
+    private boolean writeUsb(
+            byte[] data
+    ) {
+
+        if (
+                data == null
+                        || data.length == 0
+        ) {
+            return true;
+        }
+
+        int offset = 0;
+
+        while (offset < data.length) {
+
+            int length =
+                    Math.min(
+                            MAX_USB_CHUNK,
+                            data.length - offset
+                    );
+
+            if (!writeUsbChunk(data, offset, length)) {
+                return false;
+            }
+
+            offset += length;
+        }
+
+        return true;
+    }
+
     // ---------------------------------------------------------
-    // ESC/POS BAND BUILDER
+    // ESC/POS GS v 0 FULL RASTER BUILDER
     // ---------------------------------------------------------
 
-    private byte[] buildRasterBand(
-            int[][] pixels,
-            int y
+    /**
+     * Builds a single GS v 0 raster command containing the entire
+     * image, replacing the old per-24-row ESC * band loop. The printer
+     * receives width/height once and then a continuous bit-packed
+     * pixel stream, letting the head print in one uninterrupted pass.
+     */
+    private byte[] buildFullRasterImage(
+            int[][] pixels
     ) {
 
         if (
                 pixels == null
                         || pixels.length == 0
-                        || y >= pixels.length
         ) {
             return null;
         }
 
-        int widthBytes =
-                pixels[y].length;
+        int height = pixels.length;
+        int width = pixels[0].length;
+        int widthBytes = (width + 7) / 8; // 1 bit per pixel, MSB first
 
         ByteArrayOutputStream buffer =
                 new ByteArrayOutputStream(
-                        8 + (widthBytes * BAND_HEIGHT)
+                        8 + (widthBytes * height)
                 );
 
         try {
 
-            // ESC * 33
-            buffer.write(
-                    SELECT_BIT_IMAGE_MODE
-            );
+            // GS v 0 m xL xH yL yH
+            buffer.write(0x1D); // GS
+            buffer.write(0x76); // v
+            buffer.write(0x30); // 0
+            buffer.write(0x00); // m = normal mode, no scaling
 
-            // nL / nH
-            buffer.write(
-                    widthBytes & 0xFF
-            );
+            buffer.write(widthBytes & 0xFF);        // xL
+            buffer.write((widthBytes >> 8) & 0xFF); // xH
+            buffer.write(height & 0xFF);             // yL
+            buffer.write((height >> 8) & 0xFF);      // yH
 
-            buffer.write(
-                    (widthBytes >> 8) & 0xFF
-            );
+            for (int y = 0; y < height; y++) {
 
-            // 24 vertical dots
-            for (
-                    int x = 0;
-                    x < widthBytes;
-                    x++
-            ) {
+                int[] row = pixels[y];
 
-                byte[] slice =
-                        recollectSlice(
-                                y,
-                                x,
-                                pixels
-                        );
+                for (int bx = 0; bx < widthBytes; bx++) {
 
-                if (slice != null) {
-                    buffer.write(
-                            slice
-                    );
+                    byte b = 0;
+
+                    for (int bit = 0; bit < 8; bit++) {
+
+                        int x = bx * 8 + bit;
+
+                        if (x < width) {
+
+                            boolean black =
+                                    UtilsImage.shouldPrintColor(row[x]);
+
+                            if (black) {
+                                b |= (byte) (1 << (7 - bit));
+                            }
+                        }
+                    }
+
+                    buffer.write(b);
                 }
             }
-
-            // Move to next raster line
-            buffer.write(
-                    LINE_FEED
-            );
 
         } catch (IOException e) {
 
             Log.e(
                     LOG_TAG,
-                    "Failed building raster band",
+                    "Failed to build full raster image",
                     e
             );
 
@@ -851,101 +895,40 @@ public class USBPrinterAdapter implements PrinterAdapter {
                             imageHeight
                     );
 
-            // 24-dot line spacing
-            if (!writeUsb(
-                    SET_LINE_SPACE_24
-            )) {
-
-                throw new IOException(
-                        "Failed to set line spacing"
-                );
+            // Center alignment still applies to the raster block on
+            // most ESC/POS clones.
+            if (!writeUsb(CENTER_ALIGN)) {
+                throw new IOException("Failed to set alignment");
             }
 
-            // Center
-            if (!writeUsb(
-                    CENTER_ALIGN
-            )) {
+            byte[] rasterImage =
+                    buildFullRasterImage(pixels);
+
+            if (
+                    rasterImage == null
+                            || rasterImage.length == 0
+            ) {
 
                 throw new IOException(
-                        "Failed to set alignment"
+                        "Failed to build raster image"
                 );
             }
-
-            int totalBands =
-                    (pixels.length + BAND_HEIGHT - 1)
-                            / BAND_HEIGHT;
 
             Log.i(
                     LOG_TAG,
-                    "Printing "
-                            + totalBands
-                            + " raster bands"
+                    "Sending raster image: "
+                            + rasterImage.length
+                            + " bytes as one continuous stream ("
+                            + ((rasterImage.length + MAX_USB_CHUNK - 1) / MAX_USB_CHUNK)
+                            + " USB chunks)"
             );
 
-            for (
-                    int y = 0;
-                    y < pixels.length;
-                    y += BAND_HEIGHT
-            ) {
-
-                byte[] band =
-                        buildRasterBand(
-                                pixels,
-                                y
-                        );
-
-                if (
-                        band == null
-                                || band.length == 0
-                ) {
-
-                    throw new IOException(
-                            "Failed to build raster band at y="
-                                    + y
-                    );
-                }
-
-                boolean success =
-                        writeUsb(band);
-
-                if (!success) {
-
-                    throw new IOException(
-                            "USB transfer failed at y="
-                                    + y
-                    );
-                }
-
-                Log.d(
-                        LOG_TAG,
-                        "Band "
-                                + ((y / BAND_HEIGHT) + 1)
-                                + "/"
-                                + totalBands
-                                + " sent, "
-                                + band.length
-                                + " bytes"
-                );
+            if (!writeUsb(rasterImage)) {
+                throw new IOException("USB raster transfer failed");
             }
 
-            // Restore line spacing
-            if (!writeUsb(
-                    SET_LINE_SPACE_32
-            )) {
-
-                throw new IOException(
-                        "Failed to restore line spacing"
-                );
-            }
-
-            // Final feed
-            if (!writeUsb(
-                    LINE_FEED
-            )) {
-
-                throw new IOException(
-                        "Failed final line feed"
-                );
+            if (!writeUsb(LINE_FEED)) {
+                throw new IOException("Failed final line feed");
             }
 
             Log.i(
