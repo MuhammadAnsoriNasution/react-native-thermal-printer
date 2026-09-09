@@ -328,56 +328,40 @@ public class BLEPrinterAdapter implements PrinterAdapter {
     private byte[] buildFullRasterImage(int[][] pixels) {
 
         if (pixels == null || pixels.length == 0) {
-            return null;
+                return null;
         }
 
         int height = pixels.length;
         int width = pixels[0].length;
-        int widthBytes = (width + 7) / 8; // 1 bit per pixel, MSB first
+        int widthBytes = (width + 7) / 8;
 
         ByteArrayOutputStream buffer =
                 new ByteArrayOutputStream(8 + (widthBytes * height));
 
-        try {
-            // GS v 0 m xL xH yL yH
-            buffer.write(0x1D); // GS
-            buffer.write(0x76); // v
-            buffer.write(0x30); // 0
-            buffer.write(0x00); // m = normal mode, no scaling
+        buffer.write(0x1D);
+        buffer.write(0x76);
+        buffer.write(0x30);
+        buffer.write(0x00);
+        buffer.write(widthBytes & 0xFF);
+        buffer.write((widthBytes >> 8) & 0xFF);
+        buffer.write(height & 0xFF);
+        buffer.write((height >> 8) & 0xFF);
 
-            buffer.write(widthBytes & 0xFF);        // xL
-            buffer.write((widthBytes >> 8) & 0xFF); // xH
-            buffer.write(height & 0xFF);             // yL
-            buffer.write((height >> 8) & 0xFF);      // yH
-
-            for (int y = 0; y < height; y++) {
-
+        for (int y = 0; y < height; y++) {
                 int[] row = pixels[y];
-
                 for (int bx = 0; bx < widthBytes; bx++) {
-
-                    byte b = 0;
-
-                    for (int bit = 0; bit < 8; bit++) {
-
+                byte b = 0;
+                for (int bit = 0; bit < 8; bit++) {
                         int x = bx * 8 + bit;
-
                         if (x < width) {
-                            boolean black = UtilsImage.shouldPrintColor(row[x]);
-
-                            if (black) {
+                        boolean black = UtilsImage.shouldPrintColor(row[x]);
+                        if (black) {
                                 b |= (byte) (1 << (7 - bit));
-                            }
                         }
-                    }
-
-                    buffer.write(b);
+                        }
                 }
-            }
-
-        } catch (IOException e) {
-            Log.e(LOG_TAG, "Failed to build full raster image", e);
-            return null;
+                buffer.write(b);
+                }
         }
 
         return buffer.toByteArray();
