@@ -46,7 +46,6 @@ public class BLEPrinterAdapter implements PrinterAdapter {
     // Chunk size purely for RFCOMM write() safety — the printer still
     // receives one continuous raster stream, no commands or feeds are
     // injected between chunks.
-    private static final int WRITE_CHUNK_SIZE = 4096;
 
     private BluetoothDevice mBluetoothDevice;
     private BluetoothSocket mBluetoothSocket;
@@ -287,6 +286,8 @@ public class BLEPrinterAdapter implements PrinterAdapter {
     // LOW LEVEL BLUETOOTH WRITE
     // ---------------------------------------------------------
 
+    private static final int WRITE_CHUNK_SIZE = 1024;
+
     /**
      * Writes a (possibly large) buffer as a sequence of write() calls,
      * each capped at WRITE_CHUNK_SIZE. This is purely a transport-level
@@ -312,6 +313,12 @@ public class BLEPrinterAdapter implements PrinterAdapter {
             outputStream.flush();
 
             offset += length;
+            
+            try {
+                Thread.sleep(10);
+            } catch (InterruptedException e) {
+                e.printStackTrace();
+            }
         }
     }
 

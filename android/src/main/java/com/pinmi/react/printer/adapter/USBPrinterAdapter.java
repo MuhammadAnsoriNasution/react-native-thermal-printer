@@ -63,7 +63,7 @@ public class USBPrinterAdapter implements PrinterAdapter {
 
     // Safe chunk size for bulkTransfer(); well under the ~16KB threshold
     // where some Android USB host stacks silently truncate transfers.
-    private static final int MAX_USB_CHUNK = 4096;
+    private static final int MAX_USB_CHUNK = 1024;
 
     private Context mContext;
     private UsbManager mUSBManager;
@@ -625,6 +625,12 @@ public class USBPrinterAdapter implements PrinterAdapter {
             }
 
             offset += length;
+            
+            try {
+                Thread.sleep(10);
+            } catch (InterruptedException e) {
+                e.printStackTrace();
+            }
         }
 
         return true;
